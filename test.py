@@ -1,6 +1,4 @@
-from collections import Counter
+a = {1, 2, 3}
+b = {3, 4, 5}
 
-c = Counter("aaabbc")
-print(c)
-c.update("cccbba")
-print(*c.elements())
+print(*a.__iter__())
