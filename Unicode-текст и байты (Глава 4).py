@@ -2,6 +2,9 @@
 #bytearray - изменяемый
 import codecs
 import os
+import sys
+
+import winioctlcon
 
 cafe = bytes("café", encoding="utf8")
 print(cafe[0])
@@ -69,3 +72,33 @@ def shave_marks(txt):
 
 order = "Herr Voß: • ½ cup of OEtker™ caffè latte • bowl of açaí."
 print(shave_marks(order))
+
+print()
+
+# Сортировка Unicode-текстов
+# Лучше всего использовать эту библиотеку для соортировки неанглийских текстов
+from pyuca import Collator
+c = Collator()
+fruits = ['caju', 'atemoia', 'cajá', 'açaí', 'acerola']
+print(sorted(fruits, key=c.sort_key))
+
+print()
+
+# Поиск символа по имени
+print(unicodedata.name("☻"))
+
+# Функция для поиска символов
+START, END = ord(" "), sys.maxunicode + 1
+
+def find(*query_words, start=START, end=END):
+    query = {w.upper() for w in query_words}
+    for code in range(start, end):
+        char = chr(code)
+        name = unicodedata.name(char, None)
+        if name and query.issubset(name.split()):
+            print(char, name)
+            print(f'U+{code:4X}\t{char}\t{name}')
+
+l = ["black", "face"]
+find(*l)
+
