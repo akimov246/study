@@ -1,4 +1,10 @@
-a = {1, 2, 3}
-b = {3, 4, 5}
+import os
+import sys
 
-print(hash(a))
+code = 9787
+print(f"{code:x}")
+print(hex(code))
+
+dirs = os.listdir("./")
+for dir in dirs:
+    print(dir, os.path.getsize(dir), "байт")
