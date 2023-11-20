@@ -75,4 +75,18 @@ Coordinate = namedtuple("Coordinate", "lat lon reference", defaults=[15, "HH"]) 
 print(Coordinate(0))
 print(Coordinate._field_defaults)
 
+# Вставка метода в класс, созданный с помощью namedtuple (Хак, так лучше не делать, да и нахуй надо, собственно)
+from deck import Deck
+Card = namedtuple("Card", "rank suit")
+Card.suit_values = dict(spades=3, hearts=2, diamonds=1, clubs=0)
+def spades_high(card: Card):
+    rank_value = Deck.ranks.index(card.rank)
+    suit_value = card.suit_values[card.suit]
+    return rank_value * len(card.suit_values) + suit_value
+Card.overall_rank = spades_high
+lower_card = Card("2", "clubs")
+highest_card = Card("A", "spades")
+print(lower_card.overall_rank())
+print(highest_card.overall_rank())
+
 # Типизированные именованные кортежи

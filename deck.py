@@ -18,14 +18,16 @@ class Deck:
         return self._cards[position]
 
 
-deck = Deck()
-print(len(deck))
-print(deck._cards)
-print(deck[0])
+if __name__ == "__main__":
+    deck = Deck()
+    print(len(deck))
+    print(deck._cards)
+    print(deck[0])
 
-suit_values = dict(spades = 3, hearts = 2, diamonds = 1, clubs = 0)
+    suit_values = dict(spades=3, hearts=2, diamonds=1, clubs=0)
 
-def spades_high(card):
-    rank_value = Deck.ranks.index(card.rank)
-    return rank_value * len(suit_values) + suit_values[card.suit]
+
+    def spades_high(card):
+        rank_value = Deck.ranks.index(card.rank)
+        return rank_value * len(suit_values) + suit_values[card.suit]
 
