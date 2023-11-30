@@ -76,3 +76,74 @@ print(Coordinate(0))
 print(Coordinate._field_defaults)
 
 # Типизированные именованные кортежи
+class CoordinateNamedTuple(typing.NamedTuple):
+    lat: float
+    lon: float
+    reference: str="WGS84"
+
+from dataclasses import dataclass, field
+@dataclass
+class ClubMember:
+    name: str
+    guests: list[str]= field(default_factory=list) # Чтобы задать значение поля по умолчанию нужно использовать field.
+    athlete: bool = field(default=False, repr=False)
+
+@dataclass
+class HackerClubMember(ClubMember):
+    all_handles = set()
+    handle: str = ""
+
+    def __post_init__(self):
+        cls = self.__class__
+        if self.handle == "":
+            self.handle = self.name.split()[0]
+        if self.handle in cls.all_handles:
+            msg = f"Handle {self.handle} already exists!"
+            raise ValueError(msg)
+        cls.all_handles.add(self.handle)
+
+from enum import Enum, auto
+from datetime import date
+from typing import Optional
+from dataclasses import fields, asdict
+
+class ResourceType(Enum):
+    BOOK = auto()
+    EBOOK = auto()
+    VIDEO = auto()
+
+@dataclass
+class Resource:
+    identifier: str
+    title: str = "<untitled>"
+    creators: list[str] = field(default_factory=list)
+    date: Optional[date] = None
+    type: ResourceType = ResourceType.BOOK
+    description: str = ""
+    language: str = ""
+    subjects: list[str] = field(default_factory=list)
+
+    def __repr__(self):
+        cls = self.__class__
+        cls_name = cls.__name__
+        tab = " " * 4
+        res = [f"{cls_name}("]
+        for key in asdict(self).keys():
+            res.append(f"{tab}{key} = {asdict(self).get(key)}")
+        # for f in fields(cls):
+        #     value = getattr(self, f.name)
+        #     res.append(f"{tab}{f.name} = {value}")
+        res.append(")")
+        return "\n".join(res)
+
+
+description = 'Improving the design of existing code'
+book = Resource('978-0-13-475759-9', 'Refactoring, 2nd Edition',
+                ['Martin Fowler', 'Kent Beck'], date(2018, 11, 19),
+                ResourceType.BOOK, description, 'EN',
+                ['computer programming', 'OOP'])
+
+print(book)
+
+for f in fields(Resource):
+    print(f.name, f.default)
