@@ -16,7 +16,7 @@ class StrKeyDict0(dict):
         return key in self.keys() or str(key) in self.keys()
 
 skd = StrKeyDict0()
-skd.update({"1": "one", "2": "two"})
+skd.update({"1": "one", "2": "two", "3": "three"})
 #print(skd[1])
 #print(skd["1"])
 #print(skd[2])
