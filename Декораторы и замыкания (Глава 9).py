@@ -156,3 +156,213 @@ def test(name: str, surname: str):
 if __name__ == '__main__':
     print('*'*40, f'Calling test(name=\'леонид\', surname=\'акимов\')')
     print(test(name='леонид', surname='акимов'))
+
+# ДЕКОРАТОРЫ В СТАНДАРТНОЙ БИБЛИОТЕКЕ
+# ЗАПОМИНАНИЕ С ПОМОЩЬЮ functools.cache
+"""
+Декораторы cache, lru_cache реализуют запоминание (memoization): прием оптимизации, смысл которого заключается в сохранении
+результатов предыдущих дорогостоящих вызовов функции, что позволяет избежать повторного вычисления с теми же аргументами, что и раньше.
+"""
+
+
+@clock
+def fibonacci(n):
+    if n < 2:
+        return n
+    return fibonacci(n - 2) + fibonacci(n - 1)
+
+if __name__ == '__main__':
+    print(fibonacci(6))
+
+import functools
+
+@functools.cache
+@clock
+def fibonacci(n):
+    if n < 2:
+        return n
+    return fibonacci(n - 2) + fibonacci(n - 1)
+
+if __name__ == '__main__':
+    print(fibonacci(6))
+
+"""
+functools.cache может занять всю имеющуюся память, если в кэше очень много элементов.
+Данный декоратор стоит использовать только в командных скриптах, работающих недолго.
+Для долгоживущих процессов стоит использовать functools.lru_cache с параметром maxsize.
+"""
+
+# ИСПОЛЬЗОВАНИЕ lru_cache
+@functools.lru_cache #maxsize=128, typed=False
+def test(a, b):
+    pass
+
+@functools.lru_cache(maxsize=2**20, typed=True)
+def test(a, b):
+    pass
+
+"""
+При maxsize=None lru_cache начинает работать, как cache
+typed=True определяет, стоит ли хранить элементы разного типа раздельно.
+Например, в конфигурации по умолчанию (typed=False) элементы типа float и int, признаные равными,
+хранятся лишь один раз, т.е. вызовы f(1) и f(1.0) приведут к помещению в кеш только одного элемента.
+"""
+
+# ОБОБЩЕННЫЕ ФУНКЦИИ С ОДИНОЧНОЙ ДИСПЕТЧЕРИЗАЦИЕЙ
+# Функция singledispatch
+"""
+Декоратор functools.singledispatch позволяет каждому модулю вносить свой вклад в решение,
+так что пользователь легко может добавить специализированную функцию, даже не имея возможности изменять класс.
+Обычная функция, декорированная @singledispatch, становится точкой входа для обобщенной функции:
+группы функций, выполняющих одну и ту же логическую операцию по-разному в зависимости от типа первого аргумента.
+Именно это и называется одиночной диспетчеризацией. Если бы для выбора конкретных функций использовалось больше аргументов,
+то мы имели бы множественную диспетчеризацию.
+"""
+
+from functools import singledispatch
+from collections import abc
+import fractions
+import decimal
+import html
+import numbers
+
+@singledispatch # Помечает базовую функцию, которая обрабатывает тип object
+def htmlize(obj: object) -> str:
+    content = html.escape(str(obj))
+    return f'<pre>{content}</pre>'
+
+@htmlize.register # Каждая специализированная функция снабжается декоратором @"base".register
+def _(text: str) -> str: # Тип первого аргумент, переданного во время выполнения, определяет, когда будет использоваться это конкретное определение функции
+    content = html.escape(text).replace('\n', '<br/>\n')
+    return f'<p>{content}</p>'
+
+@htmlize.register
+def _(seq: abc.Sequence) -> str: # Для каждого типа, нуждающегося в специальной обработке, регистрируется новая функция с подходящей аннотацией типа в первом параметре
+    inner = '</li>\n<li>'.join(htmlize(item) for item in seq)
+    return '<ul>\n<li>' + inner + '</li>\n</ul>'
+
+@htmlize.register
+def _(n: numbers.Integral) -> str:
+    #return f'<pre>{n} ({hex(n)})</pre>'
+    return f'<pre>{n} (0x{n:x})</pre>'
+
+@htmlize.register
+def _(n: bool) -> str:
+    '''bool является подтипом numbers.Integral, но singledispatch ищет реализацию с самым специфичным
+        подходящим типом независимо от порядка появления в программе'''
+    return f'<pre>{n}</pre>'
+
+@htmlize.register(fractions.Fraction)
+def _(x) -> str:
+    '''Если вы не хотите или не можете добавить аннотации типов в декорированную функцию, то можете
+        передать тип декоратору @"base".register'''
+    frac = fractions.Fraction(x)
+    return f'<pre>{frac.numerator}/{frac.denominator}</pre>'
+
+@htmlize.register(decimal.Decimal)
+@htmlize.register(float)
+def _(x) -> str:
+    '''Декоратор @"base".register возвращает недекорированную функцию,
+        поэтому можно компоновать их, чтобы зарегистрировать два или более типов для одной и той же реализации'''
+    frac = fractions.Fraction(x).limit_denominator()
+    return f'<pre>{x} ({frac.numerator}/{frac.denominator})</pre>'
+
+'''
+Если есть возможность, регистрируйте специализированные функции для обработки ABC (абстрактных классов),
+например numbers.Integral или abc.MutableSequence, а не конкретных реализаций, например int или list.
+Это позволит программе поддержать более широкий спектр совместимых типов. 
+Например, расширение Python может предоставлять альтернативу типу int с фиксированной длиной в битах в качестве 
+подклассов numbers.Integral
+'''
+
+# ПАРАМЕТРИЗОВАННЫЕ ДЕКОРАТОРЫ
+registry = []
+
+def register(func):
+    print(f'running register({func})')
+    registry.append(func)
+    return func
+
+@register
+def f1():
+    print('running f1()')
+
+print('running main()')
+print('registry ->', registry)
+
+# ПАРАМЕТРИЗОВАННЫЙ РЕГИСТРАЦИОННЫЙ ДЕКОРАТОР
+registry = set() # Заменим list на set, чтобы ускорить добавлений и удалений функций
+
+def register(active=True): # Функция register принимает необязательный именованный аргумент (фабрика декораторов)
+    def decorate(func): # Именно эта функция является декоратором
+        print(f'running register(active={active})->decorate({func})')
+        if active: # Регистрируем func, если аргумент active равен True
+            registry.add(func)
+        else: # Если не active и функция func присутствует в registry, удаляем ее
+            registry.discard(func)
+
+        return func
+    return decorate
+
+@register(active=False)
+def f1():
+    print('running f1()')
+
+@register()
+def f2():
+    print('running f2()')
+
+def f3():
+    print('running f3()')
+
+# ПАРАМЕТРИЗОВАННЫЙ ДЕКОРАТОР clock
+DEFAULT_FMT = '[{elapsed:.8f}s] {name}({args}) -> {result}'
+
+def clock(fmt=DEFAULT_FMT): # Фабрика параметризованных декораторов
+    def decorate(func): # Декоратор (принимает функцию и возвращает фунцию-обертку)
+        def clocked(*_args): # Функция-обертка
+            start = time.perf_counter()
+            _result = func(*_args) # Результат, возвращенный декорированной функцией
+            elapsed = time.perf_counter() - start
+            name = func.__name__
+            args = ', '.join(str(arg) for arg in _args)
+            result = str(_result)
+            print(fmt.format(**locals())) # Подставляем в fmt все локальные переменные функции clocked
+            return _result
+        return clocked
+    return decorate
+
+if __name__ == '__main__':
+    @clock()
+    def snooze(seconds):
+        time.sleep(seconds)
+
+    for i in range(3):
+        snooze(.123)
+
+# ДЕКОРАТОР clock НА ОСНОВЕ КЛАССОВ
+DEFAULT_FMT = '[{elapsed:.8f}s] {name}({args}) -> {result}'
+
+class clock: # Фабрика параметризованных декораторов
+
+    def __init__(self, fmt=DEFAULT_FMT):
+        self.fmt = fmt
+
+    def __call__(self, func): # Декоратор
+        def clocked(*_args): # Обертка
+            start = time.perf_counter()
+            _result = func(*_args)
+            elapsed = time.perf_counter() - start
+            name = func.__name__
+            args = ', '.join(str(arg) for arg in _args)
+            result = str(_result)
+            print(self.fmt.format(**locals()))
+            return _result
+        return clocked
+
+@clock('{name}: {elapsed}')
+def snooze(seconds):
+    time.sleep(seconds)
+
+for i in range(3):
+    snooze(.123)
