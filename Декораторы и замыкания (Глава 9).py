@@ -360,7 +360,7 @@ class clock: # Фабрика параметризованных декорат�
             return _result
         return clocked
 
-@clock('{name}: {elapsed}')
+@clock('{name}: {elapsed:.5f}')
 def snooze(seconds):
     time.sleep(seconds)
 

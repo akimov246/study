@@ -1,10 +1,13 @@
-import os
-import sys
+from typing import NamedTuple
 
-code = 9787
-print(f"{code:x}")
-print(hex(code))
+# User = NamedTuple('User', id = int, name = str)
+#
+# user = User(1, 'akimov246')
+# print(user)
 
-dirs = os.listdir("./")
-for dir in dirs:
-    print(dir, os.path.getsize(dir), "байт")
+class User(NamedTuple):
+    id: int
+    name: str
+
+user = User(2, 'akimoff246')
+print(user)
