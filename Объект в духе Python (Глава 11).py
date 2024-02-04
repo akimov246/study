@@ -17,12 +17,18 @@ import math
 
 # Класс вектора
 class Vector2d:
+    '''Чтобы заставить работать класс с позиционными образцами (match/case), необходимо добавить атрибут класса __match_args__,
+       перечислив в нем атрибуты экземпляра в том порядке, в каком они будут использоваться при позиционном сравнении с образцом.
+    '''
+    __match_args__ = ('x', 'y')
+
     typecode = 'd' # Аттрибут класса, которым мы воспользуемся, когда будем преобразовывать экземпляры Vector2d в последовательность байтов и наоборот.
 
     def __init__(self, x, y):
         self.__x = float(x)
         self.__y = float(y)
 
+    # Декоратор @property спользуется для создания свойства чтения закрытого атрибута класса
     @property
     def x(self):
         return self.__x
@@ -30,6 +36,11 @@ class Vector2d:
     @property
     def y(self):
         return self.__y
+
+    # Декоратор x.setter задает setter для защищенного атрибута класса (его тут быть не должно, для примера добавил)
+    @x.setter
+    def x(self, value):
+        self.__x = float(value)
 
     def __iter__(self):
         '''Наличие метода __iter__ делает Vector2d итерируемым;
@@ -80,13 +91,12 @@ class Vector2d:
         return math.atan2(self.y, self.x)
 
     def __hash__(self):
-        '''Рекомендуется вычислять hash кортежа покомпонентно'''
-        return hash((self.x, self.y))
+        '''Рекомендуется вычислять hash кортежа покомпонентно
+            ИЛИ
+           Объединить хеши атрибутов экземпляра с помощью оператора ИСКЛЮЧАЮЩЕЕ ИЛИ (XOR)'''
 
-
-v = Vector2d(1, -2)
-print(hash(v))
-print(complex(v))
+        return hash(tuple(self))
+        #return (hash(self.x) ^ hash(self.y))
 
 # Декораторы classmethod и staticmethod
 '''
@@ -114,3 +124,101 @@ print(brl)
 print(format(brl, '0.4f'))
 print('1 BRL = {rate:0.2f}'.format(rate=brl))
 print(f'1 USD = {1 / brl:0.2f} BRL')
+
+# Поддержка позиционного сопоставления с образцом
+
+# Сопоставление с именованными образцами
+def keyword_pattern_demo(v: Vector2d) -> None:
+    match v:
+        case Vector2d(x=0, y=0):
+            print(f'{v!r} is null')
+        case Vector2d(x=0):
+            print(f'{v!r} is vertical')
+        case Vector2d(y=0):
+            print(f'{v!r} is horizontal')
+        case Vector2d(x=x, y=y) if x==y:
+            print(f'{v!r} is diagonal')
+        case _:
+            print(f'{v!r} is awesome')
+
+# Сравнение с позиционными образцами
+def positional_pattern_demo(v: Vector2d) -> None:
+    match v:
+        case Vector2d(0, 0):
+            print(f'{v!r} is null')
+        case Vector2d(0):
+            print(f'{v!r} is vertical')
+        case Vector2d(_, 0):
+            print(f'{v!r} is horizontal')
+        case Vector2d(x, y) if x==y:
+            print(f'{v!r} is diagonal')
+        case _:
+            print(f'{v!r} is awesome')
+
+v = Vector2d(1, 1)
+keyword_pattern_demo(v)
+positional_pattern_demo(v)
+print(v.__dict__)
+
+'''
+Переменные с двумя передними подчеркиваниями __var - закрытые. 
+Переменные с одним передним подчеркиванием _var - 'защищенные'. Это просто соглашение, для интерпитатора это ничего не значит.
+'''
+
+# Экономи памяти с помощью атрибута класса __slots__
+'''
+По умолчанию Python хранит атрибуты экземпляра в словаре __dict__, принадлежащем самому экземпляру. 
+__dict__ влечет за собой значительные накладные расходы.
+Но если определить атрибут класса __slots__, в котором хранится последовательность имен атрибутов, то Python будет
+использовать альтернативную модель хранения для атрибутов экземпляра:
+атрибуты с именами, представленными в __slots__, хранятся в скрытом массиве ссылок, потребляющем намного меньше памяти, чем __dict__.
+'''
+class Pixel:
+    '''__slots__ должен присутствовать в момент создания класса;
+        добавление или изменение вполследствии не оказывает никакого эффекта.
+        Имена атрибутов могут храниться в кортеже или в списке, но лучше использовать кортеж,
+        чтобы сразу было понятно, что изменять его нет никакого смысла.
+
+        Используя __slots__ код работает быстрее и потребляет памяти примерно в 3 раза меньше, чем с __dict__.'''
+    __slots__ = ('x', 'y')
+
+p = Pixel()
+p.x = 10
+p.y = 20
+#p.color = 'red'
+
+class openPixel(Pixel):
+    __slots__ = ('color', '__dict__')
+
+op = openPixel()
+op.x = 5
+op.color = 'red'
+op.flavor = 'banana'
+print(op.__dict__)
+
+# Проблемы при использовании __slots__
+'''
+Атрибут __slots__ при правильном использовании может дать значительную экономию памяти, но есть несколько подводных камней.
+> Не забывайте заново объявлять __slots__ в каждом подклассе, потому что унаследованный атрибут интерпретатор игнорирует;
+> Экземпляры класса могут иметь только атрибуты, явно перечисленные в __slots__, если в него не включено также имя __dict__ 
+(однако при этом вся экономия памяти может быть сведена на нет)
+> Для классов, где используется __slots__, нельзя употреблять декоратор @cached_property, если только 
+в __slots__ явно не включено имя __dict__.
+> Экземпляры класса не могут быть объектами слабых ссылок, если не включить в __slots__ имя __weakref__.
+'''
+
+# Переопределение атрибутов класса
+v = Vector2d(1.1, 2.2)
+b = bytes(v)
+print(b)
+v.typecode = 'f'
+b = bytes(v)
+print(b)
+
+class shortVector2d(Vector2d):
+    typecode = 'f'
+
+sv = shortVector2d(1/11, 1/27)
+print(sv)
+print(bytes(sv))
+print(hash(sv))
