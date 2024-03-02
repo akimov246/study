@@ -146,8 +146,10 @@ series = [object() for _ in range(4)]
 # Домашнее задание от Илюхи Жопича (ответ будет в 13 главе)
 from typing import Protocol, TypeVar
 
+T = TypeVar('T')
+
 class SupportsMul(Protocol):
-    def __mul__(self, other: int) -> Any:
+    def __mul__(self: T, other: int) -> T:
         pass
 
 SM = TypeVar("SM", bound=SupportsMul)
