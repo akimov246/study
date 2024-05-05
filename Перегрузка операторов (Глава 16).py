@@ -24,6 +24,8 @@ from array import array
 import reprlib
 import math
 from collections import abc
+import random
+import abc
 
 class Vector:
 
@@ -49,18 +51,18 @@ class Vector:
         return (bytes([ord(self.typecode)]) +
                 bytes(self._components))
 
-    def __eq__(self, other):
-        # Простая реализация
-        #return tuple(self) == tuple(other)
-
-        # Реализация лучше. Работает быстрее и постребляет меньше памяти (по крайней мере для больших векторов)
-        #return len(self) == len(other) and all(a == b for a, b in zip(self, other))
-        if len(self) != len(other):
-            return False
-        for a, b in zip(self, other):
-            if a != b:
-                return False
-        return True
+    # def __eq__(self, other):
+    #     # Простая реализация
+    #     #return tuple(self) == tuple(other)
+    #
+    #     # Реализация лучше. Работает быстрее и постребляет меньше памяти (по крайней мере для больших векторов)
+    #     #return len(self) == len(other) and all(a == b for a, b in zip(self, other))
+    #     if len(self) != len(other):
+    #         return False
+    #     for a, b in zip(self, other):
+    #         if a != b:
+    #             return False
+    #     return True
 
     def __abs__(self):
         return math.hypot(*self)
@@ -96,7 +98,7 @@ class Vector:
     Иногда удобно обращаться к нескольким первым компонентам по именам, состоящим из одной буквы,
     например x, y, z, вместо v[0], v[1], v[2].
     В классе Vector2d мы предоставляли доступ для чтения компонентам x и y с помощью декоратора @property.
-    Мы могли бы зависти в Vector четыре свойства, но это утомительно. Специальный метод __getattr__ позволяет
+    Мы могли бы завести в Vector четыре свойства, но это утомительно. Специальный метод __getattr__ позволяет
     сделать это по-другому и лучше.
     Метод __getattr__ вызывается интерпретатором, если поиск атрибута завершается неудачно.
     Иначе говоря, анализируя выражение my_obj.x, Python проверяет, если у объекта my_obj атрибут с именем x;
@@ -216,8 +218,107 @@ class Vector:
     def __rmatmul__(self, other):
         return self @ other
 
+    # Операторы сравнения
+    def __eq__(self, other):
+        if isinstance(other, Vector):
+            return (len(self) == len(other) and
+                    all(a == b for a, b in zip(self, other)))
+        else:
+            return NotImplemented
 
+    # Операторы составного присваивания
+    '''
+    Если в классе не реализованы операторы "на месте", то операторы составного присваивания - не более, чем синтаксический сахар:
+    a += b вычисляется точно также, как a = a + b. Это ожидаемое поведение для неизменяемых типов, и если добавит 
+    метод __add__, то += будет работать безо всякого дополнительного кода.
+    Однако, если всё-таки реализовать метод оператора "на месте", например __iadd__, то он и будет вызван для вычисления
+    выражения a += b. Как следует из названия, такие операторы изменяют сам левый операнд, а не создают новый объект-результат.
+    '''
 
+'''Чтобы продемонстрировать код оператора "на месте", мы расширим класс BingoCage из примера 13.9,
+реализовав в нем методы __add__ и __iadd__'''
+class Tombola(abc.ABC):  # Чтобы определить ABC создаем подкласс abc.ABC
 
+    @abc.abstractmethod
+    def load(self, iterable):
+        '''Добавить элементы из итерируемого объекта'''
 
+    @abc.abstractmethod
+    def pick(self):
+        '''Удалить случайный элемент и вернуть его.
 
+        Этот метод должен возбуждать исключение 'LookupError', если объект пуст.
+        '''
+
+    def loaded(self):
+        '''Вернуть `True`, если есть хотя бы 1 элемент, иначе `False`.
+
+        Конкретные методы ABC должны зависеть только от открытого интерфейса данного ABC
+        (т.е. от других его конкретных или абстрактных методов или свойств)
+        '''
+        return bool(self.inspect())
+
+    def inspect(self):
+        '''Вернуть отсортированный кортеж, содержащий оставшиеся в данный момент элементы.'''
+        items = []
+        while True:
+            try:
+                items.append(self.pick())
+            except LookupError:
+                break
+        self.load(items)
+        return tuple(items)
+
+# Синтаксические детали ABC
+'''
+Лучший способ объявить ABC - сделать его подклассом abc.ABC или какого-нибудь другого ABC.
+'''
+
+# Создание подклассов ABC
+
+class BingoCage(Tombola):
+
+    def __init__(self, items):
+        self._randomizer = random.SystemRandom()
+        self._items = []
+        self.load(items)
+
+    def load(self, items):
+        self._items.extend(items)
+        self._randomizer.shuffle(self._items)
+
+    def pick(self):
+        try:
+            return self._items.pop()
+        except IndexError:
+            raise LookupError('pick from empty BingoCage')
+
+    def __call__(self):
+        return self.pick()
+
+class AddableBingoCage(BingoCage):
+
+    def __add__(self, other):
+        if isinstance(other, Tombola):
+            return AddableBingoCage(self.inspect() + other.inspect())
+        else:
+            return NotImplemented
+
+    def __iadd__(self, other):
+        '''Специальные методы операторов составного присваивания должны возвращать self'''
+        if isinstance(other, Tombola):
+            other_iterable = other.inspect()
+        else:
+            try:
+                other_iterable = iter(other)
+            except TypeError:
+                msg = ('right operand in += must be "Tombola" or an iterable')
+                raise TypeError(msg)
+        self.load(other_iterable)
+        return self
+
+'''
+В общем случае, если прямой инфиксный оператор (например __mul__) предназначен для работы только с операндами того же типа,
+что и self, бесполезно реализовывать соответствующий инверсный метод (например __rmul__), потому что он, по определению,
+вызывается, только когда второй операнд имеет другой тип.
+'''
