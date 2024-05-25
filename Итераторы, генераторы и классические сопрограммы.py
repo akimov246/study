@@ -126,5 +126,113 @@ class Sentence:
         #yield from self.words
 
 # Как работает генератор
+def gen_AB():
+    print('start')
+    yield 'A'
+    print('continue')
+    yield 'B'
+    print('end.')
 
+for c in gen_AB():
+    print('--->', c)
+
+# Ленивые классы Sentence
+# Класс Sentence, попытка №4: ленивый генератор
+
+RE_WORD = re.compile(r'\w+')
+
+class Sentence:
+
+    def __init__(self, text):
+        self.text = text
+
+    def __repr__(self):
+        return f'Sentence({reprlib.repr(self.text)})'
+
+    def __iter__(self):
+        for match in RE_WORD.finditer(self.text):
+            yield match.group()
+
+# Класс Sentence, попытка №5: генераторное выражение
+def gen_AB():
+    print('start')
+    yield 'A'
+    print('continue')
+    yield 'B'
+    print('end.')
+
+res1 = [x * 3 for x in gen_AB()]
+
+for i in res1:
+    print('--->', i)
+
+res2 = (x * 3 for x in gen_AB())
+
+for i in res2:
+    print('--->', i)
+
+RE_WORD = re.compile(r'\w+')
+
+class Sentence:
+
+    def __init__(self, text):
+        self.text = text
+
+    def __repr__(self):
+        return f'Sentence({reprlib.repr(self.text)})'
+
+    def __iter__(self):
+        return (match.group() for match in RE_WORD.finditer(self.text))
+
+# Генераторные выражения: когда использовать
+'''
+Сравнение итераторов и генераторов:
+Итератор - общий термин, обозначающий любой объект, который реализует метод __next__.
+Итераторы предназначены для порождения данных, потребляемых клиентским кодом, т.е. кодом, который управляет 
+итератором по-средством цицкла for или другой итеративной конструкции либо путем явного вызова функции next(it) 
+для итератора - хотя такое явное использование встречается гораздо реже. 
+На практике большинство итераторов, встречающихся в Python, являются генераторами.
+
+Генератор - итератор, построенный компилятором Python. Для создания генератора мы не реализуем метод __next__.
+Вместо этого используется ключевое слово yield, в результате чего получаетс генераторная функция, т.е. фабрика объектов-генераторов.
+Генераторное выражение - еще один способ построить объект-генератор. 
+Объекты-генераторы предоставляют метод __next__, т.е. являются генераторами.
+'''
+
+# Генератор арифметической прогрессии
+
+class ArithmeticProgression:
+
+    def __init__(self, begin, step, end=None):
+        self.begin = begin
+        self.step = step
+        self.end = end # None - бесконечный ряд
+
+    def __iter__(self):
+        result_type = type(self.begin + self.step)
+        result = result_type(self.begin)
+        forever = self.end is None
+        index = 0
+        while forever or result < self.end:
+            yield result
+            index += 1
+            result = self.begin + self.step * index
+
+# Построение арифметической прогрессии с помощью itertools
+import itertools
+
+gen = itertools.count(1, .5)
+gen = itertools.takewhile(lambda n: n < 3, itertools.count(1, .5))
+print(list(gen))
+
+def aritprog_gen(begin, step, end=None):
+    first = type(begin + step)(begin)
+    ap_gen = itertools.count(begin, step)
+    if end is None:
+        return ap_gen
+    return itertools.takewhile(lambda n: n < end, ap_gen)
+
+# Генераторные функции в стандартной библиотеке (примеры таких функций находятся на странице 577)
+
+# Функции редуцирования итерируемого объекта
 
