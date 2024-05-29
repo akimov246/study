@@ -234,5 +234,227 @@ def aritprog_gen(begin, step, end=None):
 
 # Генераторные функции в стандартной библиотеке (примеры таких функций находятся на странице 577)
 
-# Функции редуцирования итерируемого объекта
+# yield from и субгенераторы
+# Изобретаем chain заново
 
+def chain(*iterables):
+    for it in iterables:
+        for i in it:
+            yield i
+
+print(list(chain('ABC', range(3))))
+
+def chain(*iterables):
+    for it in iterables:
+        yield from it
+
+print(list(chain('ABC', range(3))))
+
+# Обход дерева
+
+def tree(cls):
+    yield cls.__name__, 0
+    for sub_cls in cls.__subclasses__():
+        yield sub_cls.__name__, 1
+
+def display(cls):
+    for cls_name, level in tree(cls):
+        indent = ' ' * 4 * level
+        print(f'{indent}{cls_name}')
+
+display(BaseException)
+
+def tree(cls):
+    yield cls.__name__, 0
+    yield from sub_tree(cls)
+
+def sub_tree(cls):
+    for sub_cls in cls.__subclasses__():
+        yield sub_cls.__name__, 1
+
+def display(cls):
+    for cls_name, level in tree(cls):
+        indent = ' ' * 4 * level
+        print(f'{indent}{cls_name}')
+
+display(BaseException)
+
+def tree(cls):
+    yield cls.__name__, 0
+    yield from sub_tree(cls)
+
+def sub_tree(cls):
+    for sub_cls in cls.__subclasses__():
+        yield sub_cls.__name__, 1
+        for sub_sub_cls in sub_cls.__subclasses__():
+            yield sub_sub_cls.__name__, 2
+
+def display(cls):
+    for cls_name, level in tree(cls):
+        indent = ' ' * 4 * level
+        print(f'{indent}{cls_name}')
+
+display(BaseException)
+
+def tree(cls):
+    yield cls.__name__, 0
+    yield from sub_tree(cls)
+
+def sub_tree(cls):
+    for sub_cls in cls.__subclasses__():
+        yield sub_cls.__name__, 1
+        for sub_sub_cls in sub_cls.__subclasses__():
+            yield sub_sub_cls.__name__, 2
+            for sub_sub_sub_cls in sub_sub_cls.__subclasses__():
+                yield sub_sub_sub_cls.__name__, 3
+
+def display(cls):
+    for cls_name, level in tree(cls):
+        indent = ' ' * 4 * level
+        print(f'{indent}{cls_name}')
+
+display(BaseException)
+
+def tree(cls):
+    yield cls.__name__, 0
+    yield from sub_tree(cls, 1)
+
+def sub_tree(cls, level):
+    for sub_cls in cls.__subclasses__():
+        yield sub_cls.__name__, level
+        yield from sub_tree(sub_cls, level + 1)
+
+def display(cls):
+    for cls_name, level in tree(cls):
+        indent = ' ' * 4 * level
+        print(f'{indent}{cls_name}')
+
+display(BaseException)
+
+def tree(cls, level = 0):
+    yield cls.__name__, level
+    for sub_cls in cls.__subclasses__():
+        yield from tree(sub_cls, level + 1)
+
+def display(cls):
+    for cls_name, level in tree(cls):
+        indent = ' ' * 4 * level
+        print(f'{indent}{cls_name}')
+
+display(BaseException)
+
+# Обобщенные итерируемые типы
+from collections.abc import Iterable
+from typing import TypeAlias
+
+FROM_TO: TypeAlias = tuple[str, str]
+
+def zip_replace(text: str, changes: Iterable[FROM_TO]) -> str:
+    for from_, to in changes:
+        text = text.replace(from_, to)
+    return text
+
+from collections.abc import Iterator
+
+def fibonacci() -> Iterator[int]:
+    a, b = 0, 1
+    while True:
+        yield a
+        a, b = b, a + b
+
+# Классические сопрограммы
+'''
+Сопрограмма - это генераторная функция, в теле которой имеется ключевое слово yield.
+
+Объект сопрограммы является объектом-генератором.
+
+> Генераторы порождаю данные для итерирования;
+> Сопрограммы являются потребителями данных;
+> Сопрограммы не имеют никакого отношения к итерированию;
+'''
+
+# Пример: сопрограмма для вычисления накопительного среднего
+from collections.abc import Generator
+
+def averager() -> Generator[float, float, None]: # Generator[YieldType, SendType, ReturnType]
+    total = 0.0
+    count = 0
+    average = 0.0
+    while True:
+        term = yield average
+        total += term
+        count += 1
+        average = total / count
+
+'''
+В этом тесте вызов next(coro_avg) заставляет сопрограмму дойти до yield, при этом будет отдано начальное значение average.
+Запустить программу можно также, вызвав coro_avg.send(None), - именно так и поступает встроенная фунцкия next().
+Но отправить какое-то значение, кроме None, нельзя, потому что сопрограмма может принимать отправленные значения,
+только когда приостановлена в точке yield. Вызов next() или .send(None), чтобы продвинуть выполнение к первому
+предложению yield, называется "инициализацией сопрограммы".
+'''
+
+coro_avg = averager()
+#coro_avg.send(None)
+next(coro_avg)
+print(coro_avg.send(10))
+print(coro_avg.send(20))
+coro_avg.close() # Метод .close() используется для явного завершения генератора
+
+# Возврат знаения из сопрограммы
+from collections.abc import Generator
+from typing import Union, TypeAlias
+from dataclasses import dataclass
+
+@dataclass
+class Result:
+    count: int
+    average: float
+
+class Sentinel:
+    def __repr__(self):
+        return f'<Sentinel>'
+
+STOP = Sentinel()
+
+#SendType = Union[float, Sentinel]
+SendType: TypeAlias = float | Sentinel
+
+def averager2(verbose: bool=False) -> Generator[None, SendType, Result]:
+    total = 0.0
+    count = 0
+    average = 0.0
+    while True:
+        term = yield
+        if verbose:
+            print('received:', term)
+        if isinstance(term, Sentinel):
+            break
+        total += term
+        count += 1
+        average = total / count
+    return Result(count, average)
+
+coro_avg = averager2()
+next(coro_avg)
+coro_avg.send(10)
+coro_avg.send(30)
+coro_avg.send(6.5)
+try:
+    coro_avg.send(STOP)
+except StopIteration as exc:
+    result = exc.value
+
+print(result)
+
+def compute():
+    res = yield from averager2(True)
+    print('computed', res)
+    return res
+
+comp = compute()
+for v in [None, 10, 20, 30, STOP]:
+    try:
+        comp.send(v)
+    except StopIteration as exc:
+        result = exc.value
