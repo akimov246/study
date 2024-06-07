@@ -56,6 +56,10 @@
 '''
 
 # Процессы, потоки и знаменитая блокировка GIL в Python
+import math
+import multiprocessing
+import queue
+
 '''
 Ниже описано, как вышеописанные термины применяются в контексте программирования на Python.
 
@@ -103,7 +107,7 @@ import time
 
 from threading import Thread, Event
 
-def spin(msg: str, done: Event) -> None:
+def spin_threading(msg: str, done: Event) -> None:
     for char in itertools.cycle(r'\/\-'):
         status = f'\r{char} {msg}'
         print(status, end='')
@@ -117,10 +121,11 @@ def spin(msg: str, done: Event) -> None:
         blanks = ' ' * len(status)
         print(f'\r{blanks}\r', end='')
 
-def slow() -> int:
+def slow_threading() -> int:
     '''Вызывается из главного потока. Представьте, что это вызов медленного API по сети.
     Вызов sleep блокирует главный поток, но GIL при этом освобождается, поэтому поток индикатора продолжает работать.'''
-    time.sleep(5)
+    time.sleep(2)
+    #is_prime(5_000_111_000_222_021)
     return 42
 
 '''
@@ -132,20 +137,296 @@ def slow() -> int:
 вызовет Event.set()).
 '''
 
-def supervisor() -> int: # Возврашает результат slow()
+def supervisor_threading() -> int: # Возврашает результат slow()
     done = Event()
-    spinner = Thread(target=spin, args=('thinking!', done)) # Чтобы задать новый экземплятр Thread, задайте функцию в именованном
+    spinner = Thread(target=spin_threading, args=('threading thinking!', done)) # Чтобы задать новый экземплятр Thread, задайте функцию в именованном
                                                             # аргументе target, а необходимые ей позиционные аргументы передавайте
                                                             # в кортеже args
     print(f'spinner object: {spinner}') # Отобразить объект spinner
     spinner.start() # Запустить поток spinner
-    result = slow() # Вызвать функцию slow(), которая блокирует поток main. Тем временем второй поток выполняет анимацию индикатора.
+    result = slow_threading() # Вызвать функцию slow(), которая блокирует поток main. Тем временем второй поток выполняет анимацию индикатора.
     done.set() # Установить флаг Event в True; в результате чего произойдет выход из цикла for в функции spin
     spinner.join() # Ждать завершения потока spinner
     return result
 
-def main() -> None:
-    result = supervisor()
+def main_threading() -> None:
+    result = supervisor_threading()
     print(f'Answer: {result}')
 
-main()
+if __name__ == '__main__':
+    main_threading()
+
+# Индикатор с процессами
+
+import itertools
+import time
+from multiprocessing import Process, Event, synchronize
+
+def spin_multiprocessing(msg: str, done: synchronize.Event) -> None:
+    for char in itertools.cycle('\|/-'):
+        status = f'\r{msg} {char}'
+        print(status, end='')
+        if done.wait(0.3):
+            blanks = ' ' * len(status)
+            print(f'\r{blanks}\r', end='')
+            break
+        blanks = ' ' * len(status)
+        print(f'\r{blanks}\r', end='')
+
+def slow_multiprocessing():
+    time.sleep(2)
+    #is_prime(5_000_111_000_222_021)
+    return 42
+
+def supervisor_multiprocessing() -> int:
+    done = multiprocessing.Event()
+    spinner = Process(target=spin_multiprocessing, args=('multiprocessing thinking', done))
+    print(f'spinner object: {spinner}')
+    spinner.start()
+    result = slow_multiprocessing()
+    done.set()
+    spinner.join()
+    return result
+
+def main_multiprocessing():
+    result = supervisor_multiprocessing()
+    print(f'Answer: {result}')
+
+if __name__ == '__main__':
+    main_multiprocessing()
+
+# Индикатор с сопрограммами
+
+import asyncio
+import itertools
+
+def main_asyncio() -> None:
+    result = asyncio.run(supervisor_asyncio())
+    '''Функция asyncio.run запускает цикл событий, активирующий сопрограмму, которая в конечном итоге приведет
+    в дейстие и другие сопрограммы. Функция main остается блокированной, пока supervisor_asyncio не вернет управление.
+    Значение, возвращенное supervisor_asyncio, станет значением, возвращенным asyncio.run.'''
+    print(f'Answer: {result}')
+
+async def supervisor_asyncio() -> int: # платформенная сопрограмма (ключевые слово async def)
+    spinner = asyncio.create_task(spin_asyncio('asyncio thinking')) # Планирует выполнение spin_asyncio сразу после
+                                                                    # возврата экзампляра asyncio.Task
+    print(f'spinner object: {spinner}')
+    result = await slow_asyncio() # Ключевое слово await вызывает slow_asyncio, блокирующую supervisor_asyncio до возврата из slow_asyncio.
+                          # Значение, возвращенное slow_asyncio, присваивается переменной result.
+    spinner.cancel() # Метод Task.cancel возбуждает исключение CancelledError внути сопрограммы spin_asyncio.
+    return result
+
+async def spin_asyncio(msg: str) -> None: # Нам не нужен аргумент Event
+    for char in itertools.cycle('\|/-'):
+        status = f'\r{msg} {char}'
+        print(status, end='')
+        try:
+            await asyncio.sleep(0.3) # Использовать asyncio.sleep() вместо time.sleep(), чтобы приостановить выполнение
+                                     # без блокировки других сопрограмм
+        except asyncio.CancelledError:
+            '''Когда вызывается метод cancel() объекта Task, управляющего этой сопрограммой, возбуждается исключение CancelledError.
+            Время выходить из цикла.'''
+            blanks = ' ' * len(status)
+            print(f'\r{blanks}\r', end='')
+            break
+    blanks = ' ' * len(status)
+    print(f'\r{blanks}\r', end='')
+
+async def slow_asyncio() -> int:
+    await asyncio.sleep(2) # Сопрограмма slow_asyncio также использует await asyncio.sleep() вместо time.sleep().
+    #await is_prime_async(5_000_111_000_222_021)
+    # Эксперимент: ломаем индикатор ради озарения
+    #time.sleep(1)
+    return 42
+
+if __name__ == '__main__':
+    main_asyncio()
+
+'''
+asyncio.run(coro()) вызывается из регулярной функции для управления объектом сопрограммы, который обычно является точкой
+входа в весь асинхронный код программы. Этот вызов блокирует выполнение, пока coro() не вернет управление.
+Функция run() возвращает значение, возвращенное coro().
+
+asyncio.create_task(coro()) вызывается из сопрограммы, чтобы запланировать выполнение другой сопрограммы. Этот вызов
+не приостанавливает текущую сопрограмму. Он возвращает экзампляр Task - объект, который обертывает объект сопрограммы
+и предоставляет методы для управления ей и опроса ее состояния.
+
+await coro() вызывается из сопрограммы, чтобы передать управление объекту сопрограммы, возвращенному coro().
+Этот вызов приостанавливает текущую сопрограмму до возврата из coro(). Значением выражения await является значение,
+возвращенное coro().
+
+!!! Вызов сопрограммы как coro() сразу же возвращает объект сопрограммы, но не выполняет тело функции coro.
+Активация тел сопрограммы - задача цикла событий.
+
+!!! Никогда не используйте time.sleep() в сопрограммах asyncio, если не хотите приостановить всю программу в целом.
+Если сопрограмма хочет протратить некоторое время, ничего не делая, она должна вызвать await asyncio.sleep().
+Так она уступит управление циклу событий asyncio, который может дать поработать другим ожидающим сопрограммам.
+'''
+
+# Истинное влияние GIL
+
+def is_prime(n: int) -> bool:
+    if n < 2:
+        return False
+    if n == 2:
+        return True
+    if n % 2 == 0:
+        return False
+    root = math.isqrt(n)
+    for i in range(3, root + 1, 2):
+        if n % i == 0:
+            return False
+    return True
+
+# Асинхронный вариант функции, чтобы крутился индикатор (код при этом будет работать заметно медленнее)
+async def is_prime_async(n: int) -> bool:
+    if n < 2:
+        return False
+    if n == 2:
+        return True
+    if n % 2 == 0:
+        return False
+    root = math.isqrt(n)
+    for i in range(3, root + 1, 2):
+        if n % i == 0:
+            return False
+        if i % 100_000 == 1:
+            await asyncio.sleep(0)
+    return True
+
+'''
+Использование await asyncio.sleep(0) следует рассматривать как временную меру перед рефакторингом асинхронного кода
+с целью делегирования длительных вычислений другому процессу.
+'''
+
+# Доморощенный пул процессов
+
+NUMBERS = (2,
+           142702110479723,
+           299593572317531,
+           3333333333333301,
+           3333333333333333,
+           3333335652092209,
+           4444444444444423,
+           4444444444444444,
+           4444444488888889,
+           5555553133149889,
+           5555555555555503,
+           5555555555555555,
+           6666666666666666,
+           6666666666666719,
+           6666667141414921,
+           7777777536340681,
+           7777777777777753,
+           7777777777777777,
+           9999999999999917,
+           9999999999999999)
+
+# Последовательная проверка на простоту (эталон)
+from time import perf_counter
+from dataclasses import dataclass
+from typing import NamedTuple
+
+# @dataclass
+# class Result:
+#     prime: bool
+#     elapsed: float
+#
+#     def __iter__(self):
+#         return iter((self.prime, self.elapsed))
+class Result(NamedTuple):
+    prime: bool
+    elapsed: float
+
+def check(n: int) -> Result:
+    t0 = perf_counter()
+    prime = is_prime(n)
+    return Result(prime, perf_counter() - t0)
+
+def main() -> None:
+    print(f'Checking {len(NUMBERS)} numbers sequentially:')
+    t0 = perf_counter()
+    for n in NUMBERS:
+        prime, elapsed = check(n)
+        label = 'P' if prime else ' '
+        print(f'{n:16} {label} {elapsed:9.6f}s')
+
+    elapsed = perf_counter() - t0
+    print(f'Total time: {elapsed:.2f}s')
+
+if __name__ == '__main__':
+    #main()
+    pass
+
+# Проверка на простоту. Решение на основе процессов
+import sys
+from time import perf_counter
+from typing import NamedTuple, TypeAlias
+from multiprocessing import Process, SimpleQueue, cpu_count
+from multiprocessing import queues # Используется для аннотаций типов (напрмиер queues.SimpleQueue)
+
+class PrimeResult(NamedTuple):
+    n: int
+    prime: bool
+    elapsed: float
+
+JobQueue: TypeAlias = queues.SimpleQueue[int]
+ResultQueue: TypeAlias = queue.SimpleQueue[PrimeResult]
+
+def check(n: int) -> PrimeResult:
+    t0 = perf_counter()
+    res = is_prime(n)
+    return PrimeResult(n, res, perf_counter() - t0)
+
+def worker(jobs: JobQueue, results: ResultQueue) -> None:
+    '''worker получает очередь подлежащих проверке чисел и другую очередь, в которую будет помещать результаты'''
+    while n := jobs.get(): # Число 0 использутеся, как сигнал исполнителю о необходимости завершиться.
+        results.put(check(n)) # Инициировать проверку на простоту и поместить PrimeResult в очередь
+    results.put(PrimeResult(0, False, 0.0)) # Отправить PrimeResult(0, False, 0.0) обратно, чтобы главный цикл знал, что
+                                            # этот исполнитель работу закончил
+
+def start_jobs(procs: int, jobs: JobQueue, results: ResultQueue) -> None:
+    '''procs - количество процессов, которые будут параллельно проверять числа'''
+    for n in NUMBERS:
+        jobs.put(n) # Поместить подлежащее проверке числа в очередь jobs
+    for _ in range(procs):
+        proc = Process(target=worker, args=(jobs, results)) # Создать дочерние процессы для всех исполнителей.
+                                                            # Каждый дочерний процесс будет исполнять цикл в собственном экземпляре
+                                                            # функции worker, пока не извлечет 0 из очереди jobs
+        proc.start() # Запустить все дочерние процессы
+        jobs.put(0) # Поместить в очередь по одному значению 0 для каждого процесса, чтобы завершить их
+
+def main() -> None:
+    if len(sys.argv) < 2: # Если аргументы в коммандной строке не заданы, то положить количество процессов равным количеству
+                          # процессорных ядер, в противном случае создать столько процессов, сколько указано в первом аргументе
+        procs = cpu_count()
+    else:
+        procs = int(sys.argv[1])
+
+    print(f'Checking {len(NUMBERS)} numbers with {procs} processes:')
+    t0 = perf_counter()
+    jobs: JobQueue = SimpleQueue()
+    results: ResultQueue = SimpleQueue()
+    start_jobs(procs, jobs, results) # Запустить proc процессов, которые будут выбирать данные из очереди jobs и помещать
+                                     # результаты в results
+    checked = report(procs, results) # Извлечь и отобразить результаты
+    elapsed = perf_counter() - t0
+    print(f'{checked} checks in {elapsed:.2f}s') # Показать количество проверенных чисел и общее затраченное время
+
+def report(procs: int, results: ResultQueue) -> int:
+    checked = 0 # Количество проверенных чисел
+    procs_done = 0 # Количество выполненных процессов
+    while procs_done < procs: # Цикл продолжается, пока не завершатся все дочерние процессы
+        n, prime, elapsed = results.get() # Получить один PrimeResult. Вызов метода очереди .get() блокирует выполнение
+                                          # до тех пор, пока в очереди не появится элемент.
+        if n == 0: # Если n равно 0, то один процесс завершился; увеличить счетчик procs_done
+            procs_done += 1
+        else:
+            checked += 1 # В противном случае увеличить счетчик checked и отобразить результаты
+            label = 'P' if prime else ' '
+            print(f'{n:16} {label} {elapsed:9.6f}s')
+    return checked
+
+if __name__ == '__main__':
+    main()
+
