@@ -9,4 +9,4 @@ with open('main.py') as file:
         os.system(f'git commit -m "{m}"')
         os.system(f'git push origin master')
     else:
-        print('Нет изменений для коммита!')
+        print('Nothing to commit!')
