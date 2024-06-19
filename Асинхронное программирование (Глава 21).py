@@ -117,6 +117,7 @@ async def get_flag(client: AsyncClient, cc: str) -> bytes: # Должна пол
     resp = await client.get(url, timeout=6.1, follow_redirects=True) # Метод get экземпляра httpx.AsyncClient возвращает объект
                                                                      # ClientResponse, который заодно является асинхронным
                                                                      # контекстным менеджером.
+
     return resp.read() # Операции сетевого ввода-вывода реализованы в виде методов-сопрограмм, чтобы их можно было асинхронно
                        # вызвать из цикла событий asyncio.
 
@@ -126,7 +127,7 @@ async def supervisor(cc_list: list[str]) -> int:
                                         # методами инициализации и очистки.
         to_do = [download_one(client, cc) for cc in sorted(cc_list)] # Построить список объектов сопрограм, вызвав сопрограмму
                                                                      # download_one по разу для каждого флага.
-        res = await asyncio.gather(to_do) # Ждать завершения сопрограммы asyncio.gather, которая принимает один или несколько
+        res = await asyncio.gather(*to_do) # Ждать завершения сопрограммы asyncio.gather, которая принимает один или несколько
                                           # допускающих ожидание аргументов, ждет их завершения, а затем возвращает список
                                           # результатов заданных объектов в том порядке, в каком они подавались на вход.
 
@@ -145,5 +146,193 @@ def main(downloader: Callable[[list[str]], int]) -> None:
 if __name__ == '__main__':
     main(download_many)
 
-# Секрет платформенных сопрограмм: скромные генераторы
+# Асинхронные контекстные менеджеры
+'''
+Реализация классического предложения with не поддерживает выполнение методов __enter__ и __exit__ сопрограммами. Поэтому было
+введено предложение async with, работающее с асинхронными контекстными менеджерами: объектами, реализующими методы
+__aenter__ и __aexit__ как сопрограммы.
+'''
 
+# Улучшение асинхронного загрузчика
+# Использование asyncio.as_completed и потока
+
+import asyncio
+from enum import Enum
+from collections import Counter
+from http import HTTPStatus
+from pathlib import Path
+
+import httpx
+import tqdm
+
+# По умолчанию задана низкая степень конкурентности, чтобы избежать ошибок удаленного сайта,
+# например 503 - Service Temporarily Unavalible
+
+DEFAULT_CONCUR_REQ = 5
+MAX_CONCUR_REQ = 1000
+
+DEST_DIR = Path('downloaded')
+
+POP20_CC = ('CN IN US ID BR PK NG BD RU JP MX PH VN ET EG DE IR TR CD FR').split()
+BASE_URL = 'https://www.fluentpython.com/data/flags'
+
+DownloadStatus = Enum('DownloadStatus', 'OK NOT_FOUND ERROR')
+
+def save_flag(img: bytes, filename: str) -> None:
+    (DEST_DIR / filename).write_bytes(img)
+
+async def get_flag(client: httpx.AsyncClient, base_url: str, cc: str) -> bytes:
+    url = f'{base_url}/{cc}/{cc}.gif'.lower()
+    response = await client.get(url, timeout=6.1, follow_redirects=True)
+    response.raise_for_status()
+    return response.content
+
+async def download_one(client: httpx.AsyncClient,
+                       cc: str,
+                       base_url: str,
+                       semaphore: asyncio.Semaphore,
+                       vervose: bool) -> DownloadStatus:
+    try:
+        async with semaphore: # Использовать semaphore как асинхронный контекстный менеджер, чтобы не блокировать программу
+                              # целиком; только эта сопрограмма приостанавливается, когда счетчик семафора обращается в нуль.
+            image = await get_flag(client, base_url, cc)
+    except httpx.HTTPStatusError as exc:
+        res = exc.response
+        if res.status_code == HTTPStatus.NOT_FOUND:
+            status = DownloadStatus.NOT_FOUND
+            msg = f'not found: {res.url}'
+        else:
+            raise
+    else:
+        await asyncio.to_thread(save_flag, image, f'{cc}.gif') # Сохранение изображения - операция ввода-вывода. Чтобы избежать
+                                                               # блокирования цикла событий, функция save_flag выполняется в
+                                                               # отдельном потоке.
+        status = DownloadStatus.OK
+        msg = 'OK'
+    if vervose and msg:
+        print(cc, msg)
+    return status
+
+async def supervisor(cc_list: list[str], base_url: str, verbose: bool, concur_req: int) -> Counter[DownloadStatus]:
+    '''supervisor принимает те же аргументы что фугкция download_many, но ее нельзя вызывать из main напрямую, потому
+    что это сопрограмма, а не обычная функция'''
+    counter: Counter[DownloadStatus] = Counter()
+    semaphore = asyncio.Semaphore(concur_req) # Создать семафор asyncio.Semaphore, которым смогут одновременно пользоваться
+                                              # не более concur_req сопрограмм.
+    async with httpx.AsyncClient() as client:
+        # Создать список объектов сопрограмм, по одному на каждый вызов сопрограммы download_one
+        to_do = [download_one(client, cc, base_url, semaphore, verbose) for cc in sorted(cc_list)]
+        to_do_iter = asyncio.as_completed(to_do) # Получить итератор, который будет возвращать объекты сопрограмм по мере их
+                                                 # завершения.
+        if not verbose:
+            to_do_iter = tqdm.tqdm(to_do_iter, total=len(cc_list)) # Обернуть итератор as_completed генераторной функцией tqdm,
+                                                                   # чтобы показать индикатор хода выполнения
+        error: httpx.HTTPError | None = None # Объявить переменную error и инициализировать ее значением None; в этой переменной
+                                             # мы будем хранить исключение за пределами предложения try/except, если такое возникнет.
+        for coro in to_do_iter: # Обойти завершившиеся объекты сопрограмм.
+            try:
+                status = await coro # Ждать завершения сопрограммы для получения результата. Это предложение не приводит к
+                                    # блокированию, потому что as_completed порождает только уже завершившиеся сопрограммы.
+            except httpx.HTTPStatusError as exc:
+                resp = exc.response
+                error_msg = f'HTTP error {resp.status_code} - {resp.reason_phrase}'
+                error = exc # Это присваивание необходимо, поскольку область видимости переменной exc ограничена этой
+                            # ветвью except.
+            except httpx.RequestError as exc:
+                error_msg = f'{exc} {type(exc)}'.strip()
+                error = exc
+            except KeyboardInterrupt:
+                break
+
+            if error:
+                status = DownloadStatus.ERROR # Если была ошибка, установить переменную status.
+                if verbose:
+                    url = str(error.request.url) # В режиме подробной диагностики извлечь url-адрес из возникшего исключения.
+                    cc = Path(url).stem.upper() # и имя файла, чтобы показать код страны.
+                    print(f'{cc} error: {error_msg}')
+            counter[status] += 1
+    return counter
+
+def download_many(cc_list: list[str], base_url: str, verbose: bool, concur_req: int) -> Counter[DownloadStatus]:
+    coro = supervisor(cc_list, base_url, verbose, concur_req)
+    counts = asyncio.run(coro) # download_many создает объект сопрограммы supervisor и передает его циклу событий,
+                               # вызвав asyncio.run, а затем получаем счетчик, который supervisor возвращает по завершении цикла событий.
+
+    return counts
+
+def main(download_many, default_concur_req, max_concur_req):
+    cc_list = sorted(POP20_CC)
+    actual_req = min(max_concur_req, len(cc_list))
+    base_url = BASE_URL
+    DEST_DIR.mkdir(exist_ok=True)
+    t0 = time.perf_counter()
+    counter = download_many(cc_list, base_url, False, actual_req)
+    print(counter)
+    print(time.perf_counter() - t0)
+
+if __name__ == '__main__':
+    main(download_many, DEFAULT_CONCUR_REQ, MAX_CONCUR_REQ)
+
+# Регулирование темпа запросов с помощью семафоров
+'''
+Сетевые клиенты типа рассматриваемого здесь следует дросселировать (т.е. ограничивать), чтобы избежать затопления сервера
+слишком большим количеством конкурентных запросов.
+Семафор - это примитив синхронизации, более гибкий, чем блокировка. Симафор могут удерживать несколько сопрограмм, причем
+максимальное их число настраивается. Поэтому это идеальный механизм для ограничения количества активных конкуретных сопрограмм.
+
+В классе asyncio.Semaphore имеется внутренний счетчик, который уменьшается на 1 всякий раз, как выполняется await для
+метода-сопрограммы .acquire(), и увеличивается на 1 при вызове метода .release(), который не является сопрограммой, потому что
+никогда не блокирует выполнение. Начальное значение счетчика задается при создании объекта Semaphore:
+    semaphore = asyncio.Semaphore(concur_req)
+Ожидание .acquire() не приводит к задержке, когда счетчик больше 0, но если счетчик равен 0, то .acquire() приостанавливает
+ожидающую сопрограмму до тех пор, пока какая-нибудь другая сопрограмма не вызовет .release() для того же семафора, увеличив
+тем самым счетчик. Вместо того чтобы обращаться к этим методам напрямую, безопаснее использовать semaphore как асинхронный
+контекстный менеджер.
+    await with semaphore:
+        image = await get_flag(client, base_url, cc)
+Метод-сопрограмма Semaphore.__aenter__ ждет завершения .acquire(), а метод завершения __aexit__ вызывает .release().
+Этот код гарантирует, что в любой момент времени будет активно не более concur_req экземпляров сопрограммы get_flag.
+У каждого из классов Semaphore в стандартной библиотеке имеется подкласс BoundedSemaphore, налагающий дополнительное
+ограничение: внутренний счетчик не может стать больше начального значения, если операций .release() окажется больше, 
+чем .acquire().
+'''
+
+# Отправка нескольких запросов при каждой загрузке
+'''
+Предположим, что мы хотим сохранить вместе с флагом каждой страны ее название и код, а не только код. Тогда нужно отправить
+два HTTP-запроса на каждый флаг: один для получения самого изображения флага, а другой для получения файла metadata.json, 
+находящегося в том же каталоге, что изображение, - именно там хранится название страны.
+'''
+
+async def get_country(client: httpx.AsyncClient, base_url: str, cc: str) -> str: # Возвращает название страны, если всё пройдет хорошо.
+    url = f'{base_url}/{cc}/metadata.json'.lower()
+    response = await client.get(url, timeout=6.1, follow_redirects=True)
+    response.raise_for_status()
+    metadata = response.json() # В metadata будет находиться словарь Python, построенный по содержимому ответа в формате JSON.
+    return metadata['country'] # Вернуть название страны
+
+async def download_one(client: httpx.AsyncClient,
+                       cc: str,
+                       base_url: str,
+                       semaphore: asyncio.Semaphore,
+                       verbose: bool) -> DownloadStatus:
+    try:
+        async with semaphore: # Удерживать семафор, чтобы дождаться результата get_flag
+            image = await get_flag(client, cc)
+        async with semaphore: # и еще раз для ожидания get_country
+            country = await get_country(client, base_url, cc)
+    except httpx.HTTPStatusError as exc:
+        res = exc.response
+        if res.status_code == HTTPStatus.NOT_FOUND:
+            status = DownloadStatus.NOT_FOUND
+            msg = f'not found: {res.url}'
+        else:
+            raise
+    else:
+        filename = country.replace(' ', '_') # Использовать название страны для создания нового файла
+        await asyncio.to_thread(save_flag, image, f'{filename}.gif')
+        status = DownloadStatus.OK
+        msg = 'OK'
+    if verbose and msg:
+        print(cc, msg)
+    return status
