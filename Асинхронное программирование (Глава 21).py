@@ -336,3 +336,106 @@ async def download_one(client: httpx.AsyncClient,
     if verbose and msg:
         print(cc, msg)
     return status
+
+# Написание асинхронных серверов
+
+import sys
+import unicodedata
+from collections import defaultdict
+from collections.abc import Iterator
+
+STOP_CODE: int = sys.maxunicode + 1
+Char = str
+Index = defaultdict[str, set[Char]]
+
+def tokenize(text: str) -> Iterator[str]:
+    '''Возвращает итератор слов в высоком регистре'''
+    for word in text.upper().replace('-', ' ').split():
+        yield word
+
+class InvertedIndex:
+    entries: Index
+
+    def __init__(self, start: int = 32, stop: int = STOP_CODE):
+        entries: Index = defaultdict(set)
+        for char in (chr(i) for i in range(start, stop)):
+            name = unicodedata.name(char, '')
+            if name:
+                for word in tokenize(name):
+                    entries[word].add(char)
+        self.entries = entries
+
+    def search(self, query: str) -> set[Char]:
+        if words := list(tokenize(query)):
+            found = self.entries[words[0]]
+            return found.intersection(*(self.entries[w] for w in words[1:]))
+        else:
+            return set()
+
+def format_results(chars: set[Char]) -> Iterator[str]:
+    for char in sorted(chars):
+        name = unicodedata.name(char)
+        code = ord(char)
+        yield f'U+{code:04X}\t{char}\t{name}'
+
+def main(words: list[str]) -> None:
+    if not words:
+        print('Please give one or more words to search.')
+        sys.exit(2)
+    index = InvertedIndex()
+    chars = index.search(' '.join(words))
+    for line in format_results(chars):
+        print(line)
+    print('-' * 66, f'{len(chars)} found')
+
+if __name__ == '__main__':
+    main('cat face'.split())
+
+# Веб-служба FastAPI
+
+# Следующая команда запускает код с uvicorn в режиме разработки:
+# uvicorn web_mojifinder:app --reload
+# Параметры:
+# web_mojifinder:app - имя пакета, двоеточие и имя определенного в нем ASGI-приложения; по соглашению, приложения часто называют app
+# --reload - поручить uvicorn отслеживать изменения в исходных файлах приложения и автоматически перегружать их. Полезно только на этапе разработки.
+
+# web_mojifinder.py
+from pathlib import Path
+from unicodedata import name
+
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
+
+STATIC_PATH = Path(__file__).parent.absolute() / 'static'
+
+# В этой строке определяется ASGI-приложение. Достаточно было написать app = FastAPI(). Показанные параметры - это метаданные
+# для автоматического генерирования документации.
+app = FastAPI(title='Mojifinder Web',
+              description='Search for Unicode characters by name.')
+
+class CharName(BaseModel): # Пидантическая форма JSON-ответа с полями char и name.
+    char: str
+    name: str
+
+def init(app): # Построить индекс и загрузить статическую HTML-форму, присоединив то и другое к app.state для последующего использования
+    app.state.index = InvertedIndex()
+    app.state.form = (STATIC_PATH / 'form.html').read_text()
+
+init(app) # Выполнить init в момент загрузки этого модуля ASGI-сервером.
+
+# Маршрут к оконечной точке /search; response_model использует пидантическую модель CharName для описания формата ответа
+@app.get('/search', response_model=list[CharName])
+async def search(q: str):
+    '''FastAPI предполагает, что параметры, встречающиеся в сигнатуре функции или сопрограммы, но не присутствующие
+    в пути маршрута, передаются в строке HTTP-запроса, например /search?q=cat.
+    Поскольку для q не задано значение по умоланию, FastAPI вернет код состояния 422 (Unprocessable Entity),
+    если q отсуствует в строке запроса.'''
+    chars = sorted(app.state.index.search(q))
+    return ({'char': c, 'name': name(c)} for c in chars) # Возврат итерируемого объекта, состоящего из словарей и совместимого
+                                                         # со схемой response_model, позволяет FastAPI построить JSON-ответ
+                                                         # в соответствии со схемой response_model, заданной в декораторе @app.get.
+
+@app.get('/', response_class=HTMLResponse, include_in_schema=False)
+def form(): # Обычные (не асинхронные) функции тоже можно использовать для генерирования ответов.
+    return app.state.form # В этом модуле нет функции main. Он загружается и выполняется ASGI-сервером - в данном случае uvicorn.
