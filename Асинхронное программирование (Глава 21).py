@@ -439,3 +439,53 @@ async def search(q: str):
 @app.get('/', response_class=HTMLResponse, include_in_schema=False)
 def form(): # Обычные (не асинхронные) функции тоже можно использовать для генерирования ответов.
     return app.state.form # В этом модуле нет функции main. Он загружается и выполняется ASGI-сервером - в данном случае uvicorn.
+
+# Реализация асинхронного генератора
+import asyncio
+import socket
+from collections.abc import Iterable, AsyncIterator
+from typing import NamedTuple, Optional
+
+class Result(NamedTuple):
+    domain: str
+    found: bool
+
+OptionalLoop = Optional[asyncio.AbstractEventLoop]
+
+async def probe(domain: str, loop: OptionalLoop = None) -> Result: # probe получает факультативный аргумент loop, чтобы избежать
+                                                                   # повторного вызова get_running_loop, когда эта сопрограмма
+                                                                   # вызывается из multi_probe
+    if loop is None:
+        loop = asyncio.get_running_loop()
+    try:
+        await loop.getaddrinfo(domain, None)
+    except socket.gaierror:
+        return Result(domain, False)
+    return Result(domain, True)
+
+async def multi_probe(domains: Iterable[str]) -> AsyncIterator[Result]:
+    '''Асинхронная генераторная функция порождает асинхронный объект-генератор, который можно аннотировать типом AsyncIterator[SomeType]'''
+    loop = asyncio.get_running_loop()
+    coros = [probe(domain, loop) for domain in domains] # Построить список объектов сопрограммы probe, по одному для каждого домена
+    for coro in asyncio.as_completed(coros): # Здесь async for не нужен, так как as_completed - классический генератор
+        result = await coro # Ждать завершения объекта сопрограммы для получения результата
+        yield result # Отдать result. Эта строка превращает multi_probe в асинхронный генератор
+
+import asyncio
+import sys
+from keyword import kwlist
+
+async def main(tld: str) -> None:
+    tld = tld.strip('.')
+    names = (kw for kw in kwlist if len(kw) <= 4) # Построить список ключевых слов длиной не более 4 символов
+    domains = (f'{name}.{tld}'.lower() for name in names) # Построить список доменных имен с заданным суффиксом
+    print('FOUND\t\tNOT FOUND') # Отформатировать заголовок для вывода таблицы
+    print('=====\t\t=========')
+    async for domain, found in multi_probe(domains): # Асинхронно обойти multi_probe(probe)
+        indent = '' if found else '\t\t' # Задать отступ indent шириной 0 или два табулятора, чтобы поместить результат в нижний столбец
+        print(f'{indent}{domain}')
+
+if __name__ == '__main__':
+    asyncio.run(main('net'))
+
+# Асинхронные генераторы в качестве контекстных менеджеров
