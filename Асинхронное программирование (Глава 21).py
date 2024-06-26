@@ -17,6 +17,8 @@
 '''
 
 # Пример использования asyncio: проверка доменных имен
+import typing
+
 '''
 Допустим, вы собираетесь начать новый блог, посвященный Python, и планируете зарегистрировать домен, содержащий какое-нибудь 
 клюевое слово Python и имеющий суффикс .DEV, например AWAIT.DEV.
@@ -489,3 +491,92 @@ if __name__ == '__main__':
     asyncio.run(main('net'))
 
 # Асинхронные генераторы в качестве контекстных менеджеров
+'''
+Если есть необходимость написать свой асинхронный контекстный менеджер, можно использовать 
+декоратор contextlib.asynccontextmanager. Он очень похож на декоратор @contextmanager
+'''
+
+'''
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def web_page(url): # Декорированная функция должна быть асинхронным генератором
+    loop = asyncio.get_running_loop()
+    data = await loop.run_in_executor(None, download_webpage, url) # Предположим, что download_webpage - блокирующая функция,
+                                                                   # в которой используется библиотека requests; мы выполняем ее
+                                                                   # в отдельном потоке, чтобы не блокировать цикл событий
+    yield data # Все строки перед этим выражением yield станут методом-сопрограммой __aenter__ асинхронного контекстного
+               # менеджера, построенного декоратором. Значение data будет связано с переменной data после слова слова as
+               # в предложении async with ниже
+    await loop.run_in_executor(None, update_stats, url) # Строки после yield станут методом-сопрограммой __aexit__.
+                                                        # Здесь еще один блокирующий вызов делигируется исполнителю,
+                                                        # работающему в отдельном потоке
+
+async with web_page('google.com') as data: # Использовать web_page в сочетании с async with.
+    process(data)
+'''
+
+# Асинхронные генераторы и платформенные сопрограммы
+'''
+> Те и другие объявляются с помощью async def.
+
+> В теле асинхронного генератора всегда имеется выражение yield - оно и делает его генератором. В платформенной сопрограмме 
+yield никогда не встречается.
+
+> Платформенная сопрограмма может возвращать с помощью return значение, отличное от None. В асинхронном генераторе 
+возможны только предложения return без указания возвращаемого значения.
+
+> Платформенные сопрограммы - это допускающие ожидания объекты: они могут активироваться выражениями await или передаваться 
+многочисленным функциям в модуле asyncio, которые принимают допускающие ожидание аргументы, например create_task.
+Асинхронные генераторы не допускают ожидания. Они являются асинхронными итерируемыми объектами и активируются 
+с помощью async for или асинхронным включений. 
+'''
+
+# async за пределами asyncio: Curio
+from curio import run, TaskGroup
+import curio.socket
+from keyword import kwlist
+
+MAX_KEYWORD_LEN = 4
+
+async def probe(domain: str) -> tuple[str, bool]: # probe не нужно получать цикл событий, потому что...
+    try:
+        await curio.socket.getaddrinfo(domain, None) # getaddinfo - функция верхнего уровня в модуле curio.socket, а не метод
+                                                     # объекта loop, как в asyncio
+    except curio.socket.gaierror:
+        return (domain, False)
+    return (domain, True)
+
+async def main() -> None:
+    names = (kw for kw in kwlist if len(kw) <= MAX_KEYWORD_LEN)
+    domains = (f'{name}.dev'.lower() for name in names)
+    async with TaskGroup() as group: # Группа задач TaskGroup - ключевое понятие в Curio, она служит для отслеживания и
+                                     # управления несколькими сопрограммами и гарантирует, что все они выполнятся, а по
+                                     # по завершении производится очистка
+        for domain in domains:
+            await group.spawn(probe, domain) # Метод TaskGroup.spawn запускает сопрограмму, управляемую конкретным
+                                             # экземпляром TaskGroup. Сопрограмма обернута экземпляром Task
+        async for task in group: # Обход TaskGroup с помощью async for отдает экземпляры Task по мере их завершения.
+                                 # Это соответствует for ... as_completed
+            domain, found = task.result
+            mark = '+' if found else ' '
+            print(f'{mark} {domain}')
+
+if __name__ == '__main__':
+    run(main()) # В Curio впервые предложен этот разумный способ запуска асинхронной программы в Python
+
+# Следующий фрагмент применяется вместо специальной функции gather для сбора результатов всех задач в группе
+'''
+async with TaskGroup(wait=all) as g:
+    await g.spawn(coro1)
+    await g.spawn(coro2)
+    await g.spawn(coro3)
+print('Results: ', g.results)
+'''
+
+# Аннотации типов для асинхронных объектов
+'''
+Тип возвращаемого платформенной сопрограммой значения описывает, что мы получим от сопрограммы по завершении await, т.е.
+это тип объекта, который встречается в предложении return в теле платформенной сопрограммы.
+'''
+
