@@ -110,3 +110,154 @@ class FrozenJSON:
             return [cls.build(item) for item in obj]
         else:
             return obj
+
+# Гибкое создание объектов с помощью метода __new__
+'''
+В Python метод __init__ получает self в качестве первого аргумента, поэтому к моменту вызова __init__ интерпретатором
+объект уже существует. Кроме того, __init__ не может ничего возвращать. Так что в действительности это инициатор, а не конструктор.
+Когда класс вызывается для создания экземпляра, Python вызывает специальный метод класса __new__. Хотя это метод класса,
+обрабатывается он не так, как другие: к нему не применяется декоратор @classmethod. Python принимает экземпляр,
+возвращенный __new__, и передает его в качестве первого аргумента self методу __init__. Мы редко пишем __new__ самостоятельно,
+потому что реализации, унаследованной от object, обычно достаточно.
+При необходимости метод __new__ может вернуть экземпляр друго класса. В таком случае интерпретатор не вызывает __init__.
+Иными словами, логика создания объекта в Python описывается следующим псевдокодом:
+    def make(the_class, some_arg):
+        new_object = the_class.__new__(some_arg)
+        if isinstance(new_object, the_class):
+            the_class.__init__(new_object, some_arg)
+        return new_object
+'''
+
+# explore2.py: использования __new__ вместо build для конструирования новых объектов, которые могут быть или не быть
+# экхемплярами FrozenJSON
+
+from collections import abc
+import keyword
+
+class FrozenJSON:
+
+    def __new__(cls, arg): # Будучи методом класса, __new__ получает в качестве первого аргумента сам класс, а остальные
+                           # аргументы - те же, что получает __init__, за исключением self.
+        if isinstance(arg, abc.Mapping):
+            return super().__new__(cls) # По умолчаню работа делигируется методу __new__ суперкласса. В данном случае
+                                        # мы вызываем метод __new__ из базового класса object, передавая ему FrozenJSON
+                                        # в качестве единственного аргумента.
+        elif isinstance(arg, abc.MutableSequence):
+            return [cls(item) for item in arg]
+        else:
+            return arg
+
+    def __init__(self, mapping):
+        self.__data = {}
+        for key, value in mapping.items():
+            if keyword.iskeyword(key):
+                key += '_'
+            self.__data[key] = value
+
+    def __getattr__(self, name):
+        try:
+            return getattr(self.__data, name)
+        except AttributeError:
+            return FrozenJSON(self.__data[name]) # Здесь раньше вызывался метод FrozenJSON.build, а теперь мы просто вызываем
+                                                 # класс FrozenJSON, а Python обрабатывает это как вызов FrozenJSON.__new__.
+
+'''
+Метод __new__ получает в качестве первого аргумента класс, потому что обычно создается экземпляр именно этого класса.
+Таким образом, при вызове super().__new__(cls) из FrozenJSON.__new__ в действительности вызывается object.__new__(FrozenJSON),
+а объект, построенный классом object, является экземпляром класса FrozenJSON.
+'''
+
+# Вычисляемые свойства
+# Шаг 1: создание управляемого данными атрибута
+import json
+import inspect
+
+JSON_PATH = 'example-code-2e/22-dyn-attr-prop/oscon/data/osconfeed.json'
+
+class Record:
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs) # Стандартная идиома для построения экземпляра, атрибуты которого создаются
+                                     # из именованных аргументов
+
+    def __repr__(self):
+        return f'<{self.__class__.__name__} serial={self.serial!r}>' # Использовать поле serial, чтобы построить представление Record
+
+    def load(path=JSON_PATH):
+        records = {} # Метод load в конечном итоге вернет словарь экземпляров Record.
+        with open(path) as fp:
+            raw_data = json.load(fp) # Разобрать JSON и вернуть объекты Python: списки, словари, числа и т.д.
+        for collection, raw_records in raw_data['Schedule'].items(): # Обойти все четыре списка верхнего уровня:
+                                                                     # 'conferences', 'events', 'speakers' и 'venues'
+            record_type = collection[:-1] # record_type - имя списка без последнего символа, т.е. speakers становится speaker.
+            for raw_record in raw_records:
+                key = f'{record_type}.{raw_record["serial"]}' # Построить ключ в формате 'speaker.3471'
+                records[key] = Record(**raw_record) # Создать экземпляр Record и сохранить его в словаре records под ключем key.
+        return records
+
+'''
+В методе Record.__init__ иллюстрируется распространенный при программировании на Python прием. В словаре __dict__ объекта
+хранятся атрибуты - если только в классе не объявлен атрибут __slots__. Поэтому копирование в __dict__ отображения - быстрый
+способ сразу несколько атрибутов экземпляра.
+'''
+
+recors = Record.load(JSON_PATH)
+speaker = recors['speaker.3471']
+print(speaker)
+
+# Шаг 2: выборка связанных записей с помощью свойств
+class Record:
+
+    __index = None # В закрытом атрибуте класса __index будет храниться ссылка на dict, возвращенный методом load()
+
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+
+    def __repr__(self):
+        return f'<{self.__class__.__name__} serial={self.serial!r}>'
+
+    @staticmethod # fetch сделан статическим методом, чтобы было понятно, что его действие не зависит от экземпляра или класса,
+                  # от имено которого он вызывается
+    def fetch(key):
+        if Record.__index is None: # Заполнить Record.__index если необходимо
+            Record.__index = load()
+        return Record.__index[key] # Нужно, чтобы извлечь запись с заданным ключем key
+
+class Event(Record): # Класс Event расширяет Record
+
+    def __repr__(self):
+        try:
+            return f'<{self.__class__.__name__} {self.name!r}>' # Если в экземпляре есть атрибут name, включаем его в
+                                                                # строковое представление. В противном случае делегируем
+                                                                # методу __repr__, унаследованному от Record.
+        except AttributeError:
+            return super().__repr__()
+
+    @property
+    def venue(self):
+        key = f'venue.{self.venue_serial}'
+        return self.__class__.fetch(key) # Свойство venue строит ключ key по атрибуту venue_serial и передает его методу
+                                         # класса fetch, унаследованному от Record
+
+def load(path=JSON_PATH):
+    records = {}
+    with open(path) as fp:
+        raw_data = json.load(fp)
+    for collection, raw_records in raw_data['Schedule'].items():
+        record_type = collection[:-1]
+        cls_name = record_type.capitalize() # Преобразовать первую буквы record_type в верхний регистр, чтобы получить
+                                            # потенциальное имя класса.
+        cls = globals().get(cls_name, Record) # Получить объект с таким именем из глобальной области видимости модуля;
+                                              # если такого объекта нет, получаем Record
+        if inspect.isclass(cls) and issubclass(cls, Record): # Если только что полученный объект - класс, который является
+                                                             # подклассом Record, то...
+            factory = cls # Связывать с ним имя factory. Это означает, что factory может быть произвольным подклассом Record,
+                          # определяемым переменной record_type
+        else:
+            factory = Record # В противном случае связать имя factory с Record.
+        for raw_record in raw_records: # Цикл for, в котором создаются ключи и сохраняются записи, такой же, как и раньше,
+                                       # с тем исключение, что ...
+            key = f'{record_type}.{raw_record["serial"]}'
+            records[key] = factory(**raw_record) # ... объект, сохраняемый в records, конструируется функцией factory,
+                                                 # которая может быть конструктором Record или его подкласса - в зависимости
+                                                 # от значения record_type
+        return records
