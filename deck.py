@@ -1,5 +1,6 @@
 import collections
 import random
+import typing
 
 Card = collections.namedtuple("Card", ["rank", "suit"])
 
@@ -30,4 +31,3 @@ if __name__ == "__main__":
     def spades_high(card):
         rank_value = Deck.ranks.index(card.rank)
         return rank_value * len(suit_values) + suit_values[card.suit]
-
